@@ -1,9 +1,9 @@
 import os
 import aiohttp
-import asyncio
-from dotenv import load_dotenv
+import tempfile
 from pyrogram import Client, filters
 from pyrogram.types import Message
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -11,77 +11,56 @@ API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-API_URL = "https://ar-api-iauy.onrender.com/aio-dl?url="
+app = Client("downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-app = Client("aio_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
-async def download_file(url, dest_path):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                with open(dest_path, 'wb') as f:
-                    while True:
-                        chunk = await resp.content.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                return True
-            else:
-                return False
+async def download_file(session, url):
+    tmp_file = tempfile.NamedTemporaryFile(delete=False)
+    async with session.get(url) as resp:
+        if resp.status == 200:
+            with open(tmp_file.name, 'wb') as f:
+                f.write(await resp.read())
+    return tmp_file.name
 
 @app.on_message(filters.command("start"))
-async def start(client, message: Message):
-    await message.reply_text(
-        "**👋 Welcome to the Media Downloader Bot!**\n"
-        "Send any video or audio URL from YouTube, Instagram, Twitter, TikTok, etc.\n"
-        "I'll download and send it back to you 🎁"
-    )
+async def start_handler(client, message: Message):
+    await message.reply("Send me any media URL (YouTube, Instagram, TikTok, etc.) to download.")
 
 @app.on_message(filters.text & ~filters.command("start"))
-async def handle_url(client, message: Message):
+async def download_media(client, message: Message):
     url = message.text.strip()
-    info = await message.reply("🔍 Fetching download link...")
+    api = f"https://ar-api-iauy.onrender.com/aio-dl?url={url}"
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(API_URL + url) as resp:
-                result = await resp.json()
+    async with aiohttp.ClientSession() as session:
+        async with session.get(api) as response:
+            data = await response.json()
 
-        if result["status"] != 200 or result["successful"] != "success":
-            return await info.edit(f"❌ Error: `{result['data']}`")
+            if data.get("successful") != "success":
+                await message.reply("❌ Failed to fetch media. Check URL or platform.")
+                return
 
-        data = result["data"]
-        title = data.get("title", "Untitled")
-        duration = data.get("duration", "N/A")
-        formats = data.get("formats", [])
-        audio = data.get("audio")
+            media = data.get("data", {})
+            formats = media.get("formats", [])
+            audio = media.get("audio", {})
 
-        # Select the first video format or audio if video not available
-        media = formats[0] if formats else audio
-        if not media:
-            return await info.edit("⚠️ No downloadable media found.")
+            # Get best quality (first in formats list)
+            video_url = formats[0]["url"] if formats else None
 
-        download_url = media["url"]
-        filename = download_url.split("/")[-1].split("?")[0]
-        filepath = f"/tmp/{filename}"
+            if not video_url:
+                await message.reply("⚠️ No video format found.")
+                return
 
-        await info.edit("📥 Downloading media...")
+            file_path = await download_file(session, video_url)
 
-        success = await download_file(download_url, filepath)
-        if not success:
-            return await info.edit("❌ Failed to download the file.")
-
-        caption = f"🎬 **{title}**\n⏱️ Duration: {duration}"
-
-        if formats:
-            await message.reply_video(video=filepath, caption=caption)
-        else:
-            await message.reply_audio(audio=filepath, caption=caption)
-
-        os.remove(filepath)
-        await info.delete()
-
-    except Exception as e:
-        await info.edit(f"❌ Error: `{str(e)}`")
+            # Send video
+            try:
+                await message.reply_video(
+                    video=file_path,
+                    caption=f"🎬 {media.get('title', 'Downloaded Video')}\n⏱ Duration: {media.get('duration')}",
+                    supports_streaming=True
+                )
+            except Exception as e:
+                await message.reply(f"❌ Failed to send video: {e}")
+            finally:
+                os.remove(file_path)
 
 app.run()
