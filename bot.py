@@ -1,112 +1,87 @@
 import os
-import json
+import aiohttp
+import asyncio
+from dotenv import load_dotenv
 from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import Message
 
-# Environment Setup
-API_ID = int(os.getenv("API_ID", 19593445))
-API_HASH = os.getenv("API_HASH", "f78a8ae025c9131d3cc57d9ca0fbbc30")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7588430521:AAFG2FxLIe-Vqh_u9MRjdh5q6gkNHbfCUmM")
+load_dotenv()
 
-app = Client("media_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Sample responses (replace with real API responses in production)
-RESPONSES = {
-    "youtube": {
-        "status": 200,
-        "data": [
-            {"quality": "720p", "url": "https://example.com/video_720p.mp4"},
-            {"quality": "480p", "url": "https://example.com/video_480p.mp4"}
-        ]
-    },
-    "instagram": {
-        "status": 200,
-        "data": {
-            "is_video": True,
-            "video_url": "https://example.com/insta_video.mp4",
-            "photo_url": "https://example.com/insta_photo.jpg"
-        }
-    },
-    "tiktok": {
-        "status": 200,
-        "data": {
-            "type": "video",
-            "url": "https://cdn.example.com/tiktok/video123.mp4"
-        }
-    },
-    "tiktok_audio": {
-        "status": 200,
-        "data": {
-            "type": "audio",
-            "url": "https://cdn.example.com/tiktok/audio123.mp3"
-        }
-    },
-    "spotify": {
-        "status": 200,
-        "data": {
-            "title": "Believer",
-            "downloadUrl": "https://spotidownloader6-1.onrender.com/stream/IhP3J0j9JmY"
-        }
-    },
-    "pinterest": {
-        "status": 200,
-        "data": {
-            "video_url": "https://example.com/pin_video.mp4",
-            "image_urls": [
-                "https://example.com/image1.jpg",
-                "https://example.com/image2.jpg"
-            ]
-        }
-    }
-}
+API_URL = "https://ar-api-iauy.onrender.com/aio-dl?url="
 
-def generate_buttons(platform, data):
-    buttons = []
+app = Client("aio_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-    if platform == "youtube":
-        for item in data.get("data", []):
-            if item.get("url"):
-                buttons.append([InlineKeyboardButton(f"🎞 {item['quality']}", url=item["url"])])
+async def download_file(url, dest_path):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            if resp.status == 200:
+                with open(dest_path, 'wb') as f:
+                    while True:
+                        chunk = await resp.content.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                return True
+            else:
+                return False
 
-    elif platform == "instagram":
-        if data["data"].get("is_video"):
-            buttons.append([InlineKeyboardButton("📽 Video", url=data["data"]["video_url"])])
-        if data["data"].get("photo_url"):
-            buttons.append([InlineKeyboardButton("🖼 Image", url=data["data"]["photo_url"])])
-
-    elif platform == "tiktok":
-        buttons.append([InlineKeyboardButton("🎬 TikTok Video", url=data["data"]["url"])])
-
-    elif platform == "tiktok_audio":
-        buttons.append([InlineKeyboardButton("🎧 TikTok Audio", url=data["data"]["url"])])
-
-    elif platform == "spotify":
-        buttons.append([InlineKeyboardButton(f"🎵 {data['data']['title']}", url=data["data"]["downloadUrl"])])
-
-    elif platform == "pinterest":
-        if data["data"].get("video_url"):
-            buttons.append([InlineKeyboardButton("🎥 Pinterest Video", url=data["data"]["video_url"])])
-        for idx, url in enumerate(data["data"].get("image_urls", []), 1):
-            buttons.append([InlineKeyboardButton(f"🖼 Image {idx}", url=url)])
-
-    return buttons
-
-
-@app.on_message(filters.command(["start"]))
+@app.on_message(filters.command("start"))
 async def start(client, message: Message):
-    await message.reply("Welcome! Use /youtube, /instagram, /tiktok, /tiktok_audio, /spotify, or /pinterest to test buttons.")
+    await message.reply_text(
+        "**👋 Welcome to the Media Downloader Bot!**\n"
+        "Send any video or audio URL from YouTube, Instagram, Twitter, TikTok, etc.\n"
+        "I'll download and send it back to you 🎁"
+    )
 
+@app.on_message(filters.text & ~filters.command("start"))
+async def handle_url(client, message: Message):
+    url = message.text.strip()
+    info = await message.reply("🔍 Fetching download link...")
 
-@app.on_message(filters.command(["youtube", "instagram", "tiktok", "tiktok_audio", "spotify", "pinterest"]))
-async def media_handler(client, message: Message):
-    cmd = message.command[0]
-    response = RESPONSES.get(cmd)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(API_URL + url) as resp:
+                result = await resp.json()
 
-    if response and response.get("status") == 200:
-        buttons = generate_buttons(cmd, response)
-        await message.reply("Available download options:", reply_markup=InlineKeyboardMarkup(buttons))
-    else:
-        await message.reply("❌ No media found or error in response.")
+        if result["status"] != 200 or result["successful"] != "success":
+            return await info.edit(f"❌ Error: `{result['data']}`")
 
+        data = result["data"]
+        title = data.get("title", "Untitled")
+        duration = data.get("duration", "N/A")
+        formats = data.get("formats", [])
+        audio = data.get("audio")
+
+        # Select the first video format or audio if video not available
+        media = formats[0] if formats else audio
+        if not media:
+            return await info.edit("⚠️ No downloadable media found.")
+
+        download_url = media["url"]
+        filename = download_url.split("/")[-1].split("?")[0]
+        filepath = f"/tmp/{filename}"
+
+        await info.edit("📥 Downloading media...")
+
+        success = await download_file(download_url, filepath)
+        if not success:
+            return await info.edit("❌ Failed to download the file.")
+
+        caption = f"🎬 **{title}**\n⏱️ Duration: {duration}"
+
+        if formats:
+            await message.reply_video(video=filepath, caption=caption)
+        else:
+            await message.reply_audio(audio=filepath, caption=caption)
+
+        os.remove(filepath)
+        await info.delete()
+
+    except Exception as e:
+        await info.edit(f"❌ Error: `{str(e)}`")
 
 app.run()
