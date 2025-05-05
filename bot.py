@@ -1,66 +1,65 @@
-import os
 import aiohttp
 import tempfile
+import os
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from dotenv import load_dotenv
 
+# Load variables from .env
 load_dotenv()
 
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-app = Client("downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client("downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-async def download_file(session, url):
-    tmp_file = tempfile.NamedTemporaryFile(delete=False)
-    async with session.get(url) as resp:
-        if resp.status == 200:
-            with open(tmp_file.name, 'wb') as f:
-                f.write(await resp.read())
-    return tmp_file.name
+async def download_mp4_format(formats):
+    async with aiohttp.ClientSession() as session:
+        for fmt in formats:
+            if ".mp4" in fmt["url"]:
+                tmp_fd, tmp_path = tempfile.mkstemp(suffix=".mp4")
+                os.close(tmp_fd)
+                async with session.get(fmt["url"]) as resp:
+                    if resp.status != 200:
+                        continue
+                    with open(tmp_path, 'wb') as f:
+                        while True:
+                            chunk = await resp.content.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                return tmp_path
+    return None
 
-@app.on_message(filters.command("start"))
-async def start_handler(client, message: Message):
-    await message.reply("Send me any media URL (YouTube, Instagram, TikTok, etc.) to download.")
+@bot.on_message(filters.command("dl"))
+async def handle_download(_, message: Message):
+    if len(message.command) < 2:
+        return await message.reply("Send like: `/dl <url>`")
 
-@app.on_message(filters.text & ~filters.command("start"))
-async def download_media(client, message: Message):
-    url = message.text.strip()
-    api = f"https://ar-api-iauy.onrender.com/aio-dl?url={url}"
+    url = message.command[1]
+    api_url = f"https://ar-api-iauy.onrender.com/aio-dl?url={url}"
 
     async with aiohttp.ClientSession() as session:
-        async with session.get(api) as response:
-            data = await response.json()
+        async with session.get(api_url) as resp:
+            data = await resp.json()
 
-            if data.get("successful") != "success":
-                await message.reply("❌ Failed to fetch media. Check URL or platform.")
-                return
+    if data.get("status") != 200:
+        return await message.reply(f"❌ Failed: {data.get('data')}")
 
-            media = data.get("data", {})
-            formats = media.get("formats", [])
-            audio = media.get("audio", {})
+    formats = data["data"].get("formats", [])
+    if not formats:
+        return await message.reply("No valid formats found.")
 
-            # Get best quality (first in formats list)
-            video_url = formats[0]["url"] if formats else None
+    video_path = await download_mp4_format(formats)
+    if not video_path:
+        return await message.reply("Couldn't download a valid MP4 file.")
 
-            if not video_url:
-                await message.reply("⚠️ No video format found.")
-                return
+    try:
+        await message.reply_video(video=video_path, caption=data["data"].get("title", "Downloaded"))
+    except Exception as e:
+        await message.reply(f"⚠️ Error sending video: {e}")
+    finally:
+        os.remove(video_path)
 
-            file_path = await download_file(session, video_url)
-
-            # Send video
-            try:
-                await message.reply_video(
-                    video=file_path,
-                    caption=f"🎬 {media.get('title', 'Downloaded Video')}\n⏱ Duration: {media.get('duration')}",
-                    supports_streaming=True
-                )
-            except Exception as e:
-                await message.reply(f"❌ Failed to send video: {e}")
-            finally:
-                os.remove(file_path)
-
-app.run()
+bot.run()
