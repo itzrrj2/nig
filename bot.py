@@ -4,9 +4,9 @@ from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 # Environment Setup
-API_ID = int(os.getenv("API_ID", 123456))
-API_HASH = os.getenv("API_HASH", "your_api_hash")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "your_bot_token")
+API_ID = int(os.getenv("API_ID", 19593445))
+API_HASH = os.getenv("API_HASH", "f78a8ae025c9131d3cc57d9ca0fbbc30")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7588430521:AAFG2FxLIe-Vqh_u9MRjdh5q6gkNHbfCUmM")
 
 app = Client("media_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
