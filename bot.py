@@ -1,236 +1,165 @@
 import os
 import aiohttp
 import aiofiles
-import tempfile
 from uuid import uuid4
-from pyrogram import Client, filters
-from pyrogram.types import Message, MessageEntity
-from pyrogram.enums import MessageEntityType
-from dotenv import load_dotenv
 from urllib.parse import quote
+from pyrogram import Client, filters
+from pyrogram.types import Message
+from dotenv import load_dotenv
 
-# Load .env
+# Load environment variables
 load_dotenv()
 
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# APIs
+# API URLs
 YOUTUBE_VIDEO_API = "https://jerrycoder.oggyapi.workers.dev/ytmp4?url="
 YOUTUBE_AUDIO_API = "https://oggy-api.vercel.app/ytmp3?url="
 INSTAGRAM_API = "https://oggy-api.vercel.app/insta?url="
 SPOTIFY_API = "https://oggy-api.vercel.app/dspotify?url="
+TIKTOK_API = "https://ar-api-iauy.onrender.com/tiktok?url="
 
-# Init bot
+# Initialize bot
 app = Client("downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 @app.on_message(filters.command("start"))
-async def start_command(client: Client, message: Message):
+async def start(client, message):
     await message.reply_text(
         "👋 Welcome to All-In-One Downloader Bot!\n\n"
-        "📽 Send a YouTube or Instagram link to download video/image.\n"
-        "🎧 Use /audio <YouTube link> for MP3.\n"
-        "🎶 Use /spotify <Spotify link> to download music."
+        "📽 Send any YouTube / Instagram / TikTok link to download\n"
+        "🎧 Use /audio <YouTube link> to get MP3\n"
+        "🎶 Use /spotify <Spotify link> to get audio track"
     )
 
 @app.on_message(filters.command("audio") & filters.private)
-async def download_audio(client: Client, message: Message):
+async def download_audio(client, message):
     if len(message.command) < 2:
         return await message.reply("❗ Usage: /audio <YouTube URL>")
-
     url = message.command[1]
-    await message.reply("🔄 Fetching audio...")
+    await message.reply("🎧 Fetching audio...")
 
     try:
         async with aiohttp.ClientSession() as session:
-            full_api_url = YOUTUBE_AUDIO_API + quote(url, safe='')
-            async with session.get(full_api_url) as resp:
+            async with session.get(YOUTUBE_AUDIO_API + quote(url, safe='')) as resp:
                 data = await resp.json()
-
-                if "download" not in data or "title" not in data:
-                    return await message.reply("❌ Invalid audio API response.")
-
                 title = data["title"]
                 audio_url = data["download"]
 
-            headers = {"User-Agent": "Mozilla/5.0"}
-            temp_path = f"/tmp/{uuid4().hex}.mp3"
-
-            async with session.get(audio_url, headers=headers) as audio_resp:
-                if audio_resp.status != 200:
-                    return await message.reply("❌ Couldn't download the audio.")
-
-                async with aiofiles.open(temp_path, 'wb') as f:
-                    async for chunk in audio_resp.content.iter_chunked(1024 * 64):
+            path = f"/tmp/{uuid4().hex}.mp3"
+            async with session.get(audio_url) as r:
+                async with aiofiles.open(path, "wb") as f:
+                    async for chunk in r.content.iter_chunked(1024 * 64):
                         await f.write(chunk)
 
-        await message.reply_audio(
-            audio=temp_path,
-            title=title,
-            caption=f"🎵 {title}",
-            caption_entities=[
-                MessageEntity(
-                    type=MessageEntityType.BOLD,
-                    offset=2,
-                    length=len(title)
-                )
-            ]
-        )
-
-        os.remove(temp_path)
+        await message.reply_audio(audio=path, title=title, caption=f"🎵 {title}")
+        os.remove(path)
 
     except Exception as e:
         await message.reply(f"❌ Error: {e}")
 
-
 @app.on_message(filters.command("spotify") & filters.private)
-async def download_spotify(client: Client, message: Message):
+async def download_spotify(client, message):
     if len(message.command) < 2:
         return await message.reply("❗ Usage: /spotify <Spotify URL>")
-
     url = message.command[1]
     await message.reply("🎶 Fetching Spotify track...")
 
     try:
         async with aiohttp.ClientSession() as session:
-            full_api_url = SPOTIFY_API + quote(url, safe='')
-            async with session.get(full_api_url) as resp:
+            async with session.get(SPOTIFY_API + quote(url, safe='')) as resp:
                 data = await resp.json()
+                track = data["data"]
+                title = track["title"]
+                artist = track.get("artis", "")
+                audio_url = track["download"]
 
-                if not data.get("status") or "data" not in data or "download" not in data["data"]:
-                    return await message.reply("❌ Invalid Spotify API response.")
-
-                info = data["data"]
-                title = info["title"]
-                artist = info.get("artis", "")
-                audio_url = info["download"]
-                thumb_url = info.get("image")
-
-            headers = {"User-Agent": "Mozilla/5.0"}
-            temp_path = f"/tmp/{uuid4().hex}.mp3"
-
-            async with session.get(audio_url, headers=headers) as audio_resp:
-                if audio_resp.status != 200:
-                    return await message.reply("❌ Couldn't download Spotify audio.")
-
-                async with aiofiles.open(temp_path, 'wb') as f:
-                    async for chunk in audio_resp.content.iter_chunked(1024 * 64):
+            path = f"/tmp/{uuid4().hex}.mp3"
+            async with session.get(audio_url) as r:
+                async with aiofiles.open(path, "wb") as f:
+                    async for chunk in r.content.iter_chunked(1024 * 64):
                         await f.write(chunk)
 
-        await message.reply_audio(
-            audio=temp_path,
-            title=title,
-            performer=artist,
-            caption=f"🎶 {title} - {artist}",
-            caption_entities=[
-                MessageEntity(
-                    type=MessageEntityType.BOLD,
-                    offset=2,
-                    length=len(title)
-                )
-            ],
-            thumbnail=thumb_url if thumb_url else None
-        )
-
-        os.remove(temp_path)
+        await message.reply_audio(audio=path, title=title, performer=artist, caption=f"🎶 {title} - {artist}")
+        os.remove(path)
 
     except Exception as e:
         await message.reply(f"❌ Error: {e}")
 
-
 @app.on_message(filters.text & filters.private)
-async def auto_download(client: Client, message: Message):
+async def auto_download(client, message):
     url = message.text.strip()
 
     try:
-        # YouTube
-        if "youtube.com" in url or "youtu.be" in url:
-            await message.reply("🔄 Fetching YouTube video...")
+        async with aiohttp.ClientSession() as session:
 
-            async with aiohttp.ClientSession() as session:
-                full_api_url = YOUTUBE_VIDEO_API + quote(url, safe='')
-                async with session.get(full_api_url) as resp:
+            # ✅ YouTube Video
+            if "youtube.com" in url or "youtu.be" in url:
+                await message.reply("🎬 Fetching YouTube video...")
+                async with session.get(YOUTUBE_VIDEO_API + quote(url, safe='')) as resp:
                     data = await resp.json()
-
-                    if not data.get("status") or "data" not in data:
-                        return await message.reply("❌ Failed to fetch YouTube video.")
-
-                    title = data["data"]["title"]
                     video_url = data["data"]["dl"]
+                    title = data["data"]["title"]
 
-                headers = {"User-Agent": "Mozilla/5.0"}
-                temp_path = f"/tmp/{uuid4().hex}.mp4"
-
-                async with session.get(video_url, headers=headers) as video_resp:
-                    if video_resp.status != 200:
-                        return await message.reply("❌ Couldn't download the YouTube video.")
-
-                    async with aiofiles.open(temp_path, 'wb') as f:
-                        async for chunk in video_resp.content.iter_chunked(1024 * 64):
+                path = f"/tmp/{uuid4().hex}.mp4"
+                async with session.get(video_url) as r:
+                    async with aiofiles.open(path, "wb") as f:
+                        async for chunk in r.content.iter_chunked(1024 * 64):
                             await f.write(chunk)
+                await message.reply_video(video=path, caption=f"🎬 {title}")
+                os.remove(path)
+                return
 
-            await message.reply_video(
-                video=temp_path,
-                caption=f"🎬 {title}",
-                caption_entities=[
-                    MessageEntity(
-                        type=MessageEntityType.BOLD,
-                        offset=2,
-                        length=len(title)
-                    )
-                ]
-            )
-
-            os.remove(temp_path)
-            return
-
-        # Instagram
-        if "instagram.com" in url:
-            await message.reply("🔄 Fetching Instagram media...")
-
-            async with aiohttp.ClientSession() as session:
-                full_api_url = INSTAGRAM_API + quote(url, safe='')
-                async with session.get(full_api_url) as resp:
+            # ✅ Instagram Media
+            if "instagram.com" in url:
+                await message.reply("📸 Fetching Instagram media...")
+                async with session.get(INSTAGRAM_API + quote(url, safe='')) as resp:
                     data = await resp.json()
-
-                    if not data.get("status") or "data" not in data:
-                        return await message.reply("❌ Failed to fetch Instagram media.")
-
-                    items = data["data"]
-
-                    for i, item in enumerate(items):
+                    for item in data["data"]:
                         media_url = item["url"]
-                        media_type = item["type"]
-                        filename = f"/tmp/{uuid4().hex}"
-                        suffix = ".mp4" if media_type == "video" else ".jpg"
-                        full_path = filename + suffix
+                        ext = ".mp4" if item["type"] == "video" else ".jpg"
+                        path = f"/tmp/{uuid4().hex}{ext}"
 
-                        headers = {"User-Agent": "Mozilla/5.0"}
-                        async with session.get(media_url, headers=headers) as media_resp:
-                            if media_resp.status != 200:
-                                await message.reply(f"❌ Failed to download media #{i+1}")
-                                continue
-
-                            async with aiofiles.open(full_path, 'wb') as f:
-                                async for chunk in media_resp.content.iter_chunked(1024 * 64):
+                        async with session.get(media_url) as r:
+                            async with aiofiles.open(path, "wb") as f:
+                                async for chunk in r.content.iter_chunked(1024 * 64):
                                     await f.write(chunk)
 
-                        if media_type == "video":
-                            await message.reply_video(video=full_path)
+                        if ext == ".mp4":
+                            await message.reply_video(video=path)
                         else:
-                            await message.reply_photo(photo=full_path)
+                            await message.reply_photo(photo=path)
+                        os.remove(path)
+                return
 
-                        os.remove(full_path)
+            # ✅ TikTok Video (Only 720p)
+            if "tiktok.com" in url:
+                await message.reply("📱 Fetching TikTok video (720p only)...")
+                async with session.get(TIKTOK_API + quote(url, safe='')) as resp:
+                    data = await resp.json()
+                    videos = data.get("video", [])
+                    selected = next((v for v in videos if v["resolution"] == "720p"), None)
 
-            return
+                    if not selected:
+                        return await message.reply("❌ 720p resolution not available.")
 
-        # Invalid fallback
-        await message.reply("⚠️ Please send a valid YouTube, Instagram, or use /spotify <url>.")
+                    video_url = selected["link"]
+                    path = f"/tmp/{uuid4().hex}.mp4"
+
+                    async with session.get(video_url) as r:
+                        async with aiofiles.open(path, "wb") as f:
+                            async for chunk in r.content.iter_chunked(1024 * 64):
+                                await f.write(chunk)
+
+                await message.reply_video(video=path, caption="🎥 TikTok Video (720p)")
+                os.remove(path)
+                return
+
+        await message.reply("⚠️ Please send a valid YouTube, Instagram, or TikTok link, or use /audio /spotify.")
 
     except Exception as e:
         await message.reply(f"❌ Error: {e}")
 
-
-# Run the bot
+# Run bot
 app.run()
