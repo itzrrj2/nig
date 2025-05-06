@@ -2,67 +2,58 @@ import os
 import aiohttp
 import tempfile
 from pyrogram import Client, filters
+from pyrogram.types import Message
 from dotenv import load_dotenv
 
-# Load API credentials from .env
 load_dotenv()
+
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Initialize Pyrogram client
-app = Client("media_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+app = Client("all_in_one_downloader", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# API endpoint
-API_ENDPOINT = "https://ar-api-iauy.onrender.com/aio-dl?url="
+YOUTUBE_API = "https://jerrycoder.oggyapi.workers.dev/ytmp4?url="
 
-# Function to get mp4 URL from formats
-def get_best_mp4_url(formats):
-    for fmt in formats:
-        if fmt.get("ext") == "mp4" and "url" in fmt:
-            return fmt["url"]
-    return None
+@app.on_message(filters.command("start"))
+async def start(client: Client, message: Message):
+    await message.reply_text("👋 Welcome! Send me any YouTube link and I'll fetch the video for you.")
 
-# Download video and send to user
-async def download_and_send_video(message, video_url, title):
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(video_url) as resp:
-                if resp.status == 200:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-                        tmp.write(await resp.read())
-                        tmp_path = tmp.name
-                    await message.reply_video(video=tmp_path, caption=f"🎬 {title}")
-                else:
-                    await message.reply("❌ Failed to download video content.")
-    except Exception as e:
-        await message.reply(f"⚠️ Error: {e}")
-
-# Handler for any link
-@app.on_message(filters.private & filters.text)
-async def handle_url(client, message):
+@app.on_message(filters.text & filters.private)
+async def download_and_send_video(client: Client, message: Message):
     url = message.text.strip()
-    if not url.startswith("http"):
-        return await message.reply("❌ Please send a valid URL.")
 
-    await message.reply("⏳ Processing your request...")
+    if "youtube.com" in url or "youtu.be" in url:
+        await message.reply("🔄 Fetching video...")
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(API_ENDPOINT + url) as resp:
-            if resp.status == 200:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(YOUTUBE_API + url) as resp:
                 data = await resp.json()
-                if data.get("status") == 200 and data.get("successful") == "success":
-                    title = data["data"].get("title", "Downloaded Media")
-                    formats = data["data"].get("formats", [])
-                    video_url = get_best_mp4_url(formats)
-                    if video_url:
-                        await download_and_send_video(message, video_url, title)
-                    else:
-                        await message.reply("❌ Could not find a valid video format to download.")
-                else:
-                    await message.reply(f"❌ Error: {data.get('data')}")
-            else:
-                await message.reply("❌ Failed to reach the API. Try again later.")
 
-# Run the bot
+                if not data["status"]:
+                    return await message.reply("❌ Failed to fetch download link.")
+
+                title = data["data"]["title"]
+                video_url = data["data"]["dl"]
+
+            # Download the video to a temporary file
+            async with session.get(video_url) as video_resp:
+                if video_resp.status != 200:
+                    return await message.reply("❌ Couldn't download the video.")
+
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
+                    temp_video.write(await video_resp.read())
+                    temp_path = temp_video.name
+
+        # Send the video file to the user
+        await message.reply_video(
+            video=temp_path,
+            caption=f"🎬 <b>{title}</b>",
+            parse_mode="html"
+        )
+
+        os.remove(temp_path)  # Clean up temp file
+    else:
+        await message.reply("⚠️ Please send a valid YouTube link.")
+
 app.run()
