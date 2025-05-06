@@ -16,10 +16,11 @@ API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# External APIs
+# APIs
 YOUTUBE_VIDEO_API = "https://jerrycoder.oggyapi.workers.dev/ytmp4?url="
 YOUTUBE_AUDIO_API = "https://oggy-api.vercel.app/ytmp3?url="
 INSTAGRAM_API = "https://oggy-api.vercel.app/insta?url="
+SPOTIFY_API = "https://oggy-api.vercel.app/dspotify?url="
 
 # Init bot
 app = Client("downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -28,8 +29,9 @@ app = Client("downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_T
 async def start_command(client: Client, message: Message):
     await message.reply_text(
         "👋 Welcome to All-In-One Downloader Bot!\n\n"
-        "📽 Send a YouTube or Instagram link to download video or image.\n"
-        "🎧 Use /audio <YouTube link> to get MP3 audio."
+        "📽 Send a YouTube or Instagram link to download video/image.\n"
+        "🎧 Use /audio <YouTube link> for MP3.\n"
+        "🎶 Use /spotify <Spotify link> to download music."
     )
 
 @app.on_message(filters.command("audio") & filters.private)
@@ -81,12 +83,68 @@ async def download_audio(client: Client, message: Message):
     except Exception as e:
         await message.reply(f"❌ Error: {e}")
 
+
+@app.on_message(filters.command("spotify") & filters.private)
+async def download_spotify(client: Client, message: Message):
+    if len(message.command) < 2:
+        return await message.reply("❗ Usage: /spotify <Spotify URL>")
+
+    url = message.command[1]
+    await message.reply("🎶 Fetching Spotify track...")
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            full_api_url = SPOTIFY_API + quote(url, safe='')
+            async with session.get(full_api_url) as resp:
+                data = await resp.json()
+
+                if not data.get("status") or "data" not in data or "download" not in data["data"]:
+                    return await message.reply("❌ Invalid Spotify API response.")
+
+                info = data["data"]
+                title = info["title"]
+                artist = info.get("artis", "")
+                audio_url = info["download"]
+                thumb_url = info.get("image")
+
+            headers = {"User-Agent": "Mozilla/5.0"}
+            temp_path = f"/tmp/{uuid4().hex}.mp3"
+
+            async with session.get(audio_url, headers=headers) as audio_resp:
+                if audio_resp.status != 200:
+                    return await message.reply("❌ Couldn't download Spotify audio.")
+
+                async with aiofiles.open(temp_path, 'wb') as f:
+                    async for chunk in audio_resp.content.iter_chunked(1024 * 64):
+                        await f.write(chunk)
+
+        await message.reply_audio(
+            audio=temp_path,
+            title=title,
+            performer=artist,
+            caption=f"🎶 {title} - {artist}",
+            caption_entities=[
+                MessageEntity(
+                    type=MessageEntityType.BOLD,
+                    offset=2,
+                    length=len(title)
+                )
+            ],
+            thumbnail=thumb_url if thumb_url else None
+        )
+
+        os.remove(temp_path)
+
+    except Exception as e:
+        await message.reply(f"❌ Error: {e}")
+
+
 @app.on_message(filters.text & filters.private)
 async def auto_download(client: Client, message: Message):
     url = message.text.strip()
 
     try:
-        # YouTube Video
+        # YouTube
         if "youtube.com" in url or "youtu.be" in url:
             await message.reply("🔄 Fetching YouTube video...")
 
@@ -127,7 +185,7 @@ async def auto_download(client: Client, message: Message):
             os.remove(temp_path)
             return
 
-        # Instagram Media
+        # Instagram
         if "instagram.com" in url:
             await message.reply("🔄 Fetching Instagram media...")
 
@@ -167,11 +225,12 @@ async def auto_download(client: Client, message: Message):
 
             return
 
-        # Invalid URL
-        await message.reply("⚠️ Please send a valid YouTube or Instagram URL.")
+        # Invalid fallback
+        await message.reply("⚠️ Please send a valid YouTube, Instagram, or use /spotify <url>.")
 
     except Exception as e:
         await message.reply(f"❌ Error: {e}")
 
-# Run bot
+
+# Run the bot
 app.run()
