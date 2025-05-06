@@ -3,19 +3,17 @@ import aiohttp
 import tempfile
 from pyrogram import Client, filters
 from pyrogram.types import Message, MessageEntity
+from pyrogram.enums import MessageEntityType
 from dotenv import load_dotenv
 
-# Load secrets from .env file
 load_dotenv()
 
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Create bot app
 app = Client("all_in_one_downloader", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# Your custom YouTube API
 YOUTUBE_API = "https://jerrycoder.oggyapi.workers.dev/ytmp4?url="
 
 @app.on_message(filters.command("start"))
@@ -32,7 +30,6 @@ async def download_and_send_video(client: Client, message: Message):
         await message.reply("🔄 Fetching video link...")
 
         try:
-            # Step 1: Fetch download URL
             async with aiohttp.ClientSession() as session:
                 async with session.get(YOUTUBE_API + url) as resp:
                     data = await resp.json()
@@ -43,7 +40,6 @@ async def download_and_send_video(client: Client, message: Message):
                     title = data["data"]["title"]
                     video_url = data["data"]["dl"]
 
-                # Step 2: Download video file
                 async with session.get(video_url) as video_resp:
                     if video_resp.status != 200:
                         return await message.reply("❌ Couldn't download the video file.")
@@ -52,16 +48,19 @@ async def download_and_send_video(client: Client, message: Message):
                         temp_video.write(await video_resp.read())
                         temp_path = temp_video.name
 
-            # Step 3: Send the video file
             await message.reply_video(
                 video=temp_path,
                 caption=f"🎬 {title}",
                 caption_entities=[
-                    MessageEntity(type="bold", offset=2, length=len(title))
+                    MessageEntity(
+                        type=MessageEntityType.BOLD,
+                        offset=2,
+                        length=len(title)
+                    )
                 ]
             )
 
-            os.remove(temp_path)  # Clean up
+            os.remove(temp_path)
 
         except Exception as e:
             await message.reply(f"❌ Error: {e}")
@@ -69,5 +68,4 @@ async def download_and_send_video(client: Client, message: Message):
     else:
         await message.reply("⚠️ Please send a valid YouTube URL.")
 
-# Run the bot
 app.run()
